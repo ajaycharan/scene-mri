@@ -1,10 +1,14 @@
-function [varargout] = process_data(encType,vocSz,trainPercent,varargin) 
+function [varargout] = process_data(encType,layerName,trainPercent,varargin) 
 
 assert(trainPercent>0 && trainPercent<=1, 'Invalid trainPercent');
-order=2;
-paths.dataPath = '/auto/k6/pulkit/data/scene/gallantLabData/';
-paths.featDataPath = '/auto/k6/pulkit/data/scene/';
-paths.resultPath = fullfile(paths.featDataPath, 'final_results/');
+pathPrefix = '/work4/pulkitag/projMri/';
+paths.dataPath  = fullfile(pathPrefix,'gallantLabData/');
+paths.decafFeat = '/work4/pulkitag/decafFeat/mri/';
+paths.resultPath = fullfile(pathPrefix, 'exp/results/');
+
+if ~exist(paths.resultPath)
+	system(['mkdir -p ' paths.resultPath]);
+end
 
 %RUn Params
 isProfile = false;
@@ -16,35 +20,11 @@ if (isProfile)
 end
 
 switch encType
-	case 'fisher'
-		%poolType = 'hor0'
-		poolType = 'spmh0q4'
-		if isProfile
-			expName = sprintf('LFK_root_imsz480_enc%s_debug_voc%d_pool%s_he025_step3_o%d',encType,vocSz,poolType,order);
-		else
-			expName = sprintf('LFK_root_imsz480_enc%s_voc%d_pool%s_he025_step3_o%d',encType,vocSz,poolType,order);
-		end
-	case 'vq'
-		if vocSz<=256
-			poolType='spm';
-		else
-			poolType='hor';
-		end
-		poolType = 'spm'
-		expName = sprintf('LFK_root_imsz480_enc%s_voc%d_pool%s_he025_step3_o%d',encType,vocSz,poolType,order);
-	case 'gabor'
-		assert(~isempty(varargin),'3 inputs required for gabor');
-	    sfMin = vocSz;
-		sfMax = varargin{1};
-		expName = sprintf('gabor_sfmn%d_sfmx%d',sfMin,sfMax);
-		clear vocSz;	
-
 	case 'decaf'
-
-	end
-
+		expName = layerName; 
+end
 %Load the voxel data
-dataHome = '/auto/k7/dustin/data/MRI/DS/colorNatims/';
+dataHome = pathPrefix;
 load(fullfile(dataHome,'corticalVox.mat'),'cortVox');
 load(fullfile(dataHome,'responses.mat'),'r');
 trainvalVoxel = single(r.trn);
@@ -56,15 +36,33 @@ roiTmp = load(fullfile(dataHome,'rois.mat'));
 roi =  roiTmp.roiVox;
 clear roiTmp;
 
-imdbFile = fullfile(paths.featDataPath,'imdb','imdb_scene.mat');
-prmsFile = fullfile(paths.featDataPath,'prms',strcat(expName,'_prms.mat'))
 
 %Imdb File
+imdbFile = fullfile(paths.decafFeat,'imdb.mat');
 imdb = load(imdbFile);
 
-%exp prms file
-prms = load(prmsFile);
-prms = prms.prms;
+%Parameters
+prms = struct();
+prms.layerName = layerName;
+switch layerName
+	case 'l1'
+		prms.featVecDim = 27*27*96;
+	case 'l2'
+		prms.featVecDim = 27*27*256;
+	case 'l3'
+		prms.featVecDim = 13*13*384;
+	case 'l4'
+		prms.featVecDim = 13*13*384;
+	case 'l5'
+		prms.featVecDim = 6*6*256;
+	case 'l6'
+		prms.featVecDim = 4096;
+	case 'l7'
+		prms.featVecDim = 4096;
+	case 'l8'
+		prms.featVecDim = 4096;
+end
+prms.paths = paths;
 
 if isProfile
 	runNum = varargin{1};
@@ -75,9 +73,11 @@ else
 	if allVoxData
 		prms.outFileName = fullfile(paths.resultPath,strcat(expName,sprintf('_allvox_tp%.02f.mat',trainPercent)));
 	else
-		prms.outFileName = fullfile(paths.resultPath,strcat(expName,sprintf('_ignore_tp%.02f.mat',trainPercent)));
+		prms.outFileName = fullfile(paths.resultPath,strcat(expName,sprintf('_roi_tp%.02f.mat',trainPercent)));
 	end
 end
+
+disp(prms.outFileName);
 
 lhFieldNames = fieldnames(roi.lh);
 rhFieldNames = fieldnames(roi.rh);
@@ -192,18 +192,22 @@ numVoxels = size(trainvalVox,1);
 if ~isDebug
 	numTest = 126; 
 	assert(size(testVox,2)==numTest,'testVoxel Number mismatch');
-	trainvalFeat = ones(numTrainVal,prms.fisherVecDim);
-	testFeat = ones(numTest,prms.fisherVecDim);
+	trainvalFeat = ones(numTrainVal,prms.featVecDim);
+	testFeat = ones(numTest,prms.featVecDim);
 	fileStr = '000000';
 	%Get train-val features.
 	for i=1:1:numTrainVal 
 		fName = num2str(permutation(i));
 		l = length(fName);
 		fName = strcat(fileStr(1:end-l),fName);
-		featFileName = fullfile(prms.paths.codes,'trainval',strcat(fName,'.mat'));
+		featFileName = fullfile(prms.paths.decafFeat,prms.layerName,'train',strcat(fName,'.mat'));
 		feat = load(featFileName);
-		feat = feat.code;
-		trainvalFeat(i,:) = feat;
+		feat = squeeze(feat.feat);
+		l1Norm = sum(abs(feat(:)));
+		if l1Norm > 0
+			feat = feat/l1Norm;
+		end	
+		trainvalFeat(i,:) = feat(:);
 	end
 	trainvalFeat(isnan(trainvalFeat)) = 0;
 
@@ -212,10 +216,14 @@ if ~isDebug
 		fName = num2str(i);
 		l = length(fName);
 		fName = strcat(fileStr(1:end-l),fName);
-		featFileName = fullfile(prms.paths.codes,'test',strcat(fName,'.mat'));
+		featFileName = fullfile(prms.paths.decafFeat,prms.layerName,'test',strcat(fName,'.mat'));
 		feat = load(featFileName);
-		feat = feat.code;
-		testFeat(i,:) = feat;
+		feat = squeeze(feat.feat);
+		l1Norm = sum(abs(feat(:)));
+		if l1Norm > 0
+			feat = feat/l1Norm;
+		end	
+		testFeat(i,:) = feat(:);
 	end
 	[testFeat,blah] = build_features(testFeat,0,0,delay);  
 	testFeat(isnan(testFeat)) = 0;

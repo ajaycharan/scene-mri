@@ -1,9 +1,8 @@
 function [] = vis_data(encType,vocSz,varargin)
 order=2;
-paths.dataPath = '/auto/k6/pulkit/data/scene/gallantLabData/';
-paths.featDataPath = '/auto/k6/pulkit/data/scene/';
-paths.resultPath = fullfile(paths.featDataPath, 'final_results/');
+get_paths();
 
+pngFileName = 'results/%s.png';
 switch encType
 	case 'fisher'
 		if vocSz<=256
@@ -28,7 +27,12 @@ switch encType
 	    sfMin = vocSz;
 		sfMax = varargin{1};
 		expName = sprintf('gabor_sfmn%d_sfmx%d_ignore_tp1.00',sfMin,sfMax);
-		clear vocSz;	
+		clear vocSz;
+	case 'decaf'
+		layerName = vocSz;
+		%expName = sprintf('%s_allvox_tp1.00',layerName);
+		expName = sprintf('%s_roi_tp1.00',layerName);
+		
 end
 
 outFileName = fullfile(paths.resultPath,strcat(expName,'.mat'));
@@ -57,12 +61,13 @@ for i=1:1:length(areaNames)
 	med = median(corrVals);
 	mn = mean(corrVals);
 	allCorr{i} = corrVals;
-	%disp(sprintf('%s_%0.2f_%0.2f',areaNames{i},med,mn));
-	%subplot(numPlots,numPlots,i);
-	%xCenters = linspace(-1,1,50);
-	%hist(corrVals,xCenters);
-	%title(sprintf('%s_%0.2f_%0.2f',areaNames{i},med,mn));
 	
+	disp(sprintf('%s_%0.2f_%0.2f',areaNames{i},med,mn));
+	subplot(numPlots,numPlots,i);
+	xCenters = linspace(-1,1,50);
+	hist(corrVals,xCenters);
+	title(sprintf('%s_%0.2f_%0.2f',areaNames{i},med,mn));
+	%}
 end
 allCorr = cat(1,allCorr{:});
 mn = mean(allCorr);
@@ -73,4 +78,8 @@ bMn = mean(allCorr);
 bMd = median(allCorr);
 disp(sprintf('Mean: %f, Median: %f, threshSum: %d',mn,md,threshSum));		
 disp(sprintf('Abov thresh vox: Mean: %f, Median: %f ',bMn,bMd));		
+
+outFile = sprintf(pngFileName,expName);
+disp(outFile);
+print('-dpng','-r400',outFile);
 end
